@@ -406,12 +406,15 @@ function loadSVG(txt){
               // Extract editable text overlays from the rendered background SVG
               parseSVGTexts(svg,vbX,vbY);
               // Hide text elements in the background SVG to avoid visual duplication
-              // (they are now rendered by the HTML overlay layers instead)
+              // IMPORTANT: use setAttribute('display','none') not style.visibility
+              // because XMLSerializer captures attributes but NOT inline style changes
               const bgInner=document.getElementById(bg.id);
               if(bgInner){
                 const innerSVG=bgInner.querySelector('svg');
                 if(innerSVG){
-                  innerSVG.querySelectorAll('text').forEach(t=>{t.style.visibility='hidden';});
+                  innerSVG.querySelectorAll('text').forEach(t=>{
+                    t.setAttribute('display','none');
+                  });
                 }
               }
               buildLL();desel();
@@ -1254,7 +1257,8 @@ function syncTextToSVGBackground(o){
   // Update visual properties on the <text> element
   tel.setAttribute('fill', o.color);
   tel.setAttribute('font-size', String(o.fontSize));
-  tel.style.visibility = 'visible';
+  // Make visible using attribute (not style) so XMLSerializer captures it
+  tel.setAttribute('display', 'inline');
   tel.style.fontFamily = `'${o.fontFamily}',sans-serif`;
   tel.style.fontWeight = o.fontWeight;
   tel.style.fontStyle = o.fontStyle;
@@ -1385,10 +1389,16 @@ function buildSVGStr(){
   let s=`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 ${CW} ${CH}" width="${CW}" height="${CH}">`;
   objs.forEach(o=>{
     if(!o.visible)return;
+
+    // Skip transparent text overlays — their content is already in the background SVG
+    if(o.type==='txt' && o.svgExtracted) return;
+
     const cx=o.x+o.w/2,cy=o.y+o.h/2;
     const rot=o.rot?` transform="rotate(${o.rot},${cx},${cy})"`:'' ;
     const op=o.opacity!==1?` opacity="${o.opacity}"`:'';
+
     if(o.type==='txt'){
+      // Manually-added text (not from SVG extraction)
       const lines=o.text.split('\n');
       const lh=o.fontSize*(o.lineHeight||1.3);
       const tx=o.textAlign==='center'?o.x+o.w/2:o.textAlign==='right'?o.x+o.w:o.x;
@@ -1399,20 +1409,37 @@ function buildSVGStr(){
         s+=`<tspan x="${tx}" ${i===0?`y="${o.y+o.fontSize}"`:`dy="${lh}"`}>${esc(line)}</tspan>`;
       });
       s+=`</text>`;
+
     } else if(o.type==='img'){
       if(o.svgRawStr){
-        // SVG background: inline the full SVG content so the export is self-contained
-        // Wrap in a <g> with a clipPath to keep it within the canvas bounds
         s+=`<g><image href="data:image/svg+xml,${encodeURIComponent(o.svgRawStr)}" x="${o.x}" y="${o.y}" width="${o.w}" height="${o.h}" preserveAspectRatio="xMidYMid meet"${op}${rot}/></g>`;
       } else {
-        // Raster image (data URI) — embed directly
         s+=`<image href="${o.src}" x="${o.x}" y="${o.y}" width="${o.w}" height="${o.h}" preserveAspectRatio="xMidYMid slice"${op}${rot}/>`;
       }
+
     } else if(o.type==='svg'){
-      // Inline the SVG source directly at position
-      // Parse the stored svgSrc and output its content with a transform
-      const wrapped=`<g transform="translate(${o.x},${o.y}) scale(${o.w/parseOrigW(o.svgSrc)},${o.h/parseOrigH(o.svgSrc)})"${rot}${op}>${extractSVGContent(o.svgSrc)}</g>`;
-      s+=wrapped;
+      // Serialize from the live DOM element so edits + hidden texts are captured correctly
+      const liveEl=document.getElementById(o.id);
+      const liveSVG=liveEl&&liveEl.querySelector('svg');
+      if(liveSVG){
+        // Temporarily make all hidden texts visible for export
+        // (use getAttribute/setAttribute so the serialized XML captures it)
+        const hiddenTexts=[];
+        liveSVG.querySelectorAll('text').forEach(t=>{
+          if(t.getAttribute('display')==='none'){
+            hiddenTexts.push(t);
+            t.setAttribute('display','inline');
+          }
+        });
+        const serialized=new XMLSerializer().serializeToString(liveSVG);
+        // Restore hidden state after serialization
+        hiddenTexts.forEach(t=>{ t.setAttribute('display','none'); });
+        s+=`<g>${serialized}</g>`;
+      } else {
+        // Fallback to stored string
+        const wrapped=`<g transform="translate(${o.x},${o.y}) scale(${o.w/parseOrigW(o.svgSrc)},${o.h/parseOrigH(o.svgSrc)})"${rot}${op}>${extractSVGContent(o.svgSrc)}</g>`;
+        s+=wrapped;
+      }
     }
   });
   s+=`</svg>`;
