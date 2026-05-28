@@ -401,28 +401,48 @@ function loadSVG(txt){
           resetStage();
           setTimeout(()=>{
             requestAnimationFrame(()=>requestAnimationFrame(()=>{
+              // Step 1: render background SVG into DOM
               const bg=mkObj('svg',{x:0,y:0,w:CW,h:CH,svgSrc:cleanSVG,svgRawStr:cleanSVG,name:'Fondo SVG',locked:true});
               objs.push(bg);renderObj(bg);
-              // Extract editable text overlays from the rendered background SVG
-              parseSVGTexts(svg,vbX,vbY);
-              // Hide text elements in the background SVG to avoid visual duplication
-              // IMPORTANT: use setAttribute('display','none') not style.visibility
-              // because XMLSerializer captures attributes but NOT inline style changes
-              const bgInner=document.getElementById(bg.id);
-              if(bgInner){
-                const innerSVG=bgInner.querySelector('svg');
-                if(innerSVG){
-                  innerSVG.querySelectorAll('text').forEach(t=>{
-                    t.setAttribute('display','none');
-                  });
-                }
-              }
               buildLL();desel();
               requestAnimationFrame(()=>{
                 fitZ();
-                setProgress(100,'¡Listo!');
-                setTimeout(()=>loader.remove(),500);
+                setProgress(90,'Extrayendo textos editables...');
               });
+
+              // Step 2: wait for the SVG to fully paint before reading getBoundingClientRect
+              // We poll until the first text element has non-zero dimensions
+              function waitForSVGPaint(attempt){
+                const bgInner=document.getElementById(bg.id);
+                const innerSVG=bgInner&&bgInner.querySelector('svg');
+                const firstText=innerSVG&&innerSVG.querySelector('text');
+                const rect=firstText&&firstText.getBoundingClientRect();
+                
+                if(rect&&rect.width>0&&rect.height>0){
+                  // SVG is painted — now extract texts and hide originals
+                  parseSVGTexts(svg,vbX,vbY);
+                  innerSVG.querySelectorAll('text').forEach(t=>{
+                    t.setAttribute('display','none');
+                  });
+                  buildLL();
+                  setProgress(100,'¡Listo!');
+                  setTimeout(()=>loader.remove(),500);
+                } else if(attempt<40){
+                  // Not ready yet — retry in 50ms (up to 2 seconds total)
+                  setTimeout(()=>waitForSVGPaint(attempt+1), 50);
+                } else {
+                  // Timeout — proceed anyway with whatever we have
+                  parseSVGTexts(svg,vbX,vbY);
+                  innerSVG&&innerSVG.querySelectorAll('text').forEach(t=>{
+                    t.setAttribute('display','none');
+                  });
+                  buildLL();
+                  setProgress(100,'¡Listo!');
+                  setTimeout(()=>loader.remove(),500);
+                }
+              }
+              // Start polling after a short delay to let the browser paint
+              setTimeout(()=>waitForSVGPaint(0), 100);
             }));
           },30);
         },50);
