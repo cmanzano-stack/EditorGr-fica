@@ -670,8 +670,34 @@ function addSVGShapeObj(el,idx,svg,defsHTML){
 }
 
 function getSVGText(el){
-  const spans=el.querySelectorAll('tspan');
-  if(spans.length) return Array.from(spans).map(s=>s.textContent).join('\n');
+  // Illustrator creates nested tspan structures where the same text appears
+  // in both an outer tspan (no position) and inner tspan (with x,y).
+  // We only want the POSITIONED tspans (those with x or y attributes),
+  // or if none have positions, fall back to direct children only.
+  const allSpans = Array.from(el.querySelectorAll('tspan'));
+  if(!allSpans.length) return el.textContent||'';
+
+  // Get only tspans that have explicit x or y positioning (Illustrator's line-level tspans)
+  const positioned = allSpans.filter(s => s.getAttribute('x')!==null || s.getAttribute('y')!==null);
+  
+  if(positioned.length){
+    // Group tspans by their y value — same y = same line (multiple spans on one line)
+    const byY = new Map();
+    positioned.forEach(s => {
+      const y = s.getAttribute('y') || '0';
+      if(!byY.has(y)) byY.set(y, []);
+      byY.get(y).push(s.textContent);
+    });
+    // Sort by y value numerically and join each line
+    const lines = [...byY.entries()]
+      .sort((a,b) => parseFloat(a[0]) - parseFloat(b[0]))
+      .map(([,texts]) => texts.join(''));
+    return lines.join('\n');
+  }
+  
+  // Fallback: direct children tspans only (not nested)
+  const directChildren = Array.from(el.children).filter(c=>c.tagName.toLowerCase()==='tspan');
+  if(directChildren.length) return directChildren.map(s=>s.textContent).join('\n');
   return el.textContent||'';
 }
 
@@ -987,7 +1013,9 @@ window.addEventListener('mousemove',e=>{
     const o=getO(selId);if(!o)return;
     o.x=dragObj0.x+(e.clientX-dragSt.x)/Z;
     o.y=dragObj0.y+(e.clientY-dragSt.y)/Z;
-    renderObj(o);// renderObj calls updateSelBox for selected object
+    renderObj(o);
+    // If moving a svgExtracted text, also move the visual text in the background SVG
+    if(o.svgExtracted) syncPositionToSVGBackground(o);
     document.getElementById('stPos').textContent=`x:${Math.round(o.x)} y:${Math.round(o.y)}`;
     return;
   }
@@ -1266,6 +1294,28 @@ function syncTextToSVGBackground(o){
   tel.style.fontFamily = `'${o.fontFamily}',sans-serif`;
   tel.style.fontWeight = o.fontWeight;
   tel.style.fontStyle = o.fontStyle;
+}
+
+// Sync position change of a moved svgExtracted overlay back to background SVG text element
+function syncPositionToSVGBackground(o){
+  const bgObj=objs.find(b=>b.type==='svg'&&b.locked);
+  if(!bgObj) return;
+  const bgEl=document.getElementById(bgObj.id);
+  if(!bgEl) return;
+  const innerSVG=bgEl.querySelector('svg');
+  if(!innerSVG) return;
+  const texts=innerSVG.querySelectorAll('text');
+  const tel=texts[o.svgTextIdx];
+  if(!tel) return;
+  // Update the transform translate to new position
+  const current=tel.getAttribute('transform')||'';
+  const newTransform=current.replace(/translate\([^)]+\)/,`translate(${o.x},${o.y})`);
+  if(newTransform!==current){
+    tel.setAttribute('transform',newTransform);
+  } else if(!current.includes('translate')){
+    // No existing translate — set one
+    tel.setAttribute('transform',`translate(${o.x},${o.y})`+(current?` ${current}`:''));
+  }
 }
 
 function buildShapeRP(o,pc){
