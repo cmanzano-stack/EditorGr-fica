@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Apprecio — Editor Visual</title>
-<link href="https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Anton&family=Archivo+Black&family=Bangers&family=Bebas+Neue&family=Boogaloo&family=Cabin:wght@400;700&family=Comfortaa:wght@700&family=Dancing+Script:wght@700&family=Exo+2:wght@400;700;900&family=Fjalla+One&family=Fredoka+One&family=Josefin+Sans:wght@400;700&family=Kalam:wght@700&family=Lato:wght@400;700;900&family=Lobster&family=Merriweather:wght@400;700;900&family=Montserrat:wght@400;600;700;900&family=Nunito:wght@400;700;900&family=Open+Sans:wght@400;700&family=Oswald:wght@400;700&family=Pacifico&family=Permanent+Marker&family=Playfair+Display:wght@400;700;900&family=Poppins:wght@400;600;700;900&family=Raleway:wght@400;700;900&family=Roboto:wght@400;700;900&family=Righteous&family=Russo+One&family=Satisfy&family=Source+Sans+3:wght@400;700;900&family=Space+Grotesk:wght@400;700&family=Teko:wght@400;700&family=Ubuntu:wght@400;700&family=Varela+Round&family=Work+Sans:wght@400;700;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Anton&family=Archivo+Black&family=Bangers&family=Barlow:ital,wght@0,400;0,500;0,600;0,700;0,900;1,400;1,500;1,700&family=Barlow+Condensed:wght@400;700&family=Bebas+Neue&family=Boogaloo&family=Cabin:wght@400;700&family=Comfortaa:wght@700&family=Dancing+Script:wght@700&family=Exo+2:wght@400;700;900&family=Fjalla+One&family=Fredoka+One&family=Josefin+Sans:wght@400;700&family=Kalam:wght@700&family=Lato:wght@400;700;900&family=Lobster&family=Merriweather:wght@400;700;900&family=Montserrat:wght@400;600;700;900&family=Nunito:wght@400;700;900&family=Open+Sans:wght@400;700&family=Oswald:wght@400;700&family=Pacifico&family=Permanent+Marker&family=Playfair+Display:wght@400;700;900&family=Poppins:wght@400;600;700;900&family=Raleway:wght@400;700;900&family=Roboto:wght@400;700;900&family=Righteous&family=Russo+One&family=Satisfy&family=Source+Sans+3:wght@400;700;900&family=Space+Grotesk:wght@400;700&family=Teko:wght@400;700&family=Ubuntu:wght@400;700&family=Varela+Round&family=Work+Sans:wght@400;700;900&display=swap" rel="stylesheet">
 <style>
 :root{
   --red:#FA345E;--rd:#D42A4E;--rdim:rgba(250,52,94,.12);
@@ -226,7 +226,7 @@ select.fi{cursor:pointer}
 // ─────────────────────────────────────────────────────────────
 // CONSTANTS
 // ─────────────────────────────────────────────────────────────
-const FONTS=['Abril Fatface','Anton','Archivo Black','Arial','Arial Black','Bangers','Bebas Neue',
+const FONTS=['Abril Fatface','Anton','Archivo Black','Arial','Arial Black','Bangers','Barlow','Barlow Condensed','Bebas Neue',
   'Boogaloo','Cabin','Comfortaa','Dancing Script','Exo 2','Fjalla One','Fredoka One','Georgia',
   'Impact','Josefin Sans','Kalam','Lato','Lobster','Merriweather','Montserrat','Nunito',
   'Open Sans','Oswald','Pacifico','Permanent Marker','Playfair Display','Poppins','Raleway',
@@ -507,16 +507,30 @@ function parseSVGTexts(svg, vbX, vbY){
     // Skip if completely outside canvas
     if(cx+cw<-50||cx>CW+50||cy+ch<-50||cy>CH+50) return;
 
-    // Read style from element (may be on <text> or inherited from parent <g>)
+    // Read style from element — walks up ancestor chain AND checks first tspan
+    // (Illustrator often puts font on <tspan> children, not the <text> parent)
     function getAttr(el,attr){
-      let v=el.getAttribute(attr)||el.style[attr]||'';
-      if(!v&&el.parentElement) v=el.parentElement.getAttribute(attr)||'';
-      return v;
+      let cur=el;
+      while(cur&&cur.tagName!=='svg'){
+        const v=cur.getAttribute(attr)||(cur.style&&cur.style[attr])||'';
+        if(v) return v;
+        cur=cur.parentElement;
+      }
+      // Fallback: check first tspan child
+      const firstTspan=el.querySelector('tspan');
+      if(firstTspan){
+        const v=firstTspan.getAttribute(attr)||(firstTspan.style&&firstTspan.style[attr])||'';
+        if(v) return v;
+      }
+      return '';
     }
+    const rawFF=getAttr(tel,'font-family')||'Arial';
+    const fontNorm=normalizeFontName(rawFF);
+    const ff=fontNorm.f;
     const fs=parseFloat(getAttr(tel,'font-size')||16);
-    const ff=cleanFont(getAttr(tel,'font-family')||'Arial');
-    const fw=getAttr(tel,'font-weight')||'normal';
-    const fst=getAttr(tel,'font-style')||'normal';
+    // Weight/style: prefer element attribute, fall back to normalized font name
+    const fw=getAttr(tel,'font-weight')||fontNorm.w||'400';
+    const fst=getAttr(tel,'font-style')||fontNorm.s||'normal';
     const fill=getAttr(tel,'fill')||'#ffffff';
     const ls=parseFloat(getAttr(tel,'letter-spacing')||0);
 
@@ -651,7 +665,67 @@ function getSVGText(el){
   if(spans.length) return Array.from(spans).map(s=>s.textContent).join('\n');
   return el.textContent||'';
 }
-function cleanFont(f){return (f||'Arial').replace(/['"]/g,'').split(',')[0].trim();}
+
+// Map Illustrator/PostScript font names → {family, weight, style}
+// Illustrator exports fonts as "FamilyName-WeightVariant" PostScript names.
+const FONT_NORMALIZE_MAP={
+  // Barlow family
+  'Barlow-Thin':          {f:'Barlow',w:'100',s:'normal'},
+  'Barlow-ThinItalic':    {f:'Barlow',w:'100',s:'italic'},
+  'Barlow-ExtraLight':    {f:'Barlow',w:'200',s:'normal'},
+  'Barlow-Light':         {f:'Barlow',w:'300',s:'normal'},
+  'Barlow-Regular':       {f:'Barlow',w:'400',s:'normal'},
+  'Barlow-Medium':        {f:'Barlow',w:'500',s:'normal'},
+  'Barlow-MediumItalic':  {f:'Barlow',w:'500',s:'italic'},
+  'Barlow-SemiBold':      {f:'Barlow',w:'600',s:'normal'},
+  'Barlow-SemiBoldItalic':{f:'Barlow',w:'600',s:'italic'},
+  'Barlow-Bold':          {f:'Barlow',w:'700',s:'normal'},
+  'Barlow-BoldItalic':    {f:'Barlow',w:'700',s:'italic'},
+  'Barlow-ExtraBold':     {f:'Barlow',w:'800',s:'normal'},
+  'Barlow-Black':         {f:'Barlow',w:'900',s:'normal'},
+  // Barlow Condensed
+  'BarlowCondensed-Bold': {f:'Barlow Condensed',w:'700',s:'normal'},
+  'BarlowCondensed-Medium':{f:'Barlow Condensed',w:'500',s:'normal'},
+  // Montserrat
+  'Montserrat-Bold':      {f:'Montserrat',w:'700',s:'normal'},
+  'Montserrat-Regular':   {f:'Montserrat',w:'400',s:'normal'},
+  'Montserrat-SemiBold':  {f:'Montserrat',w:'600',s:'normal'},
+  'Montserrat-Black':     {f:'Montserrat',w:'900',s:'normal'},
+  // Open Sans
+  'OpenSans-Bold':        {f:'Open Sans',w:'700',s:'normal'},
+  'OpenSans-Regular':     {f:'Open Sans',w:'400',s:'normal'},
+  // Roboto
+  'Roboto-Bold':          {f:'Roboto',w:'700',s:'normal'},
+  'Roboto-Regular':       {f:'Roboto',w:'400',s:'normal'},
+  'Roboto-Medium':        {f:'Roboto',w:'500',s:'normal'},
+  // Lato
+  'Lato-Bold':            {f:'Lato',w:'700',s:'normal'},
+  'Lato-Regular':         {f:'Lato',w:'400',s:'normal'},
+  // Generic pattern fallback handled in cleanFont()
+};
+
+// Returns {family, weight, style} for a raw SVG font-family string
+function normalizeFontName(raw){
+  const key=(raw||'').replace(/['"]/g,'').split(',')[0].trim();
+  if(FONT_NORMALIZE_MAP[key]) return FONT_NORMALIZE_MAP[key];
+  // Generic pattern: "Family-WeightVariant" → try to split on last hyphen
+  const dash=key.lastIndexOf('-');
+  if(dash>0){
+    const base=key.slice(0,dash);
+    const variant=key.slice(dash+1).toLowerCase();
+    const w=variant.includes('black')?'900':variant.includes('extrabold')?'800':
+            variant.includes('bold')?'700':variant.includes('semibold')?'600':
+            variant.includes('medium')?'500':variant.includes('light')?'300':
+            variant.includes('thin')?'100':'400';
+    const s=variant.includes('italic')?'italic':'normal';
+    return {f:base, w, s};
+  }
+  return {f:key||'Arial', w:'400', s:'normal'};
+}
+
+function cleanFont(f){
+  return normalizeFontName(f).f;
+}
 
 // ─────────────────────────────────────────────────────────────
 // START BLANK
