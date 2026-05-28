@@ -405,44 +405,30 @@ function loadSVG(txt){
               const bg=mkObj('svg',{x:0,y:0,w:CW,h:CH,svgSrc:cleanSVG,svgRawStr:cleanSVG,name:'Fondo SVG',locked:true});
               objs.push(bg);renderObj(bg);
               buildLL();desel();
-              requestAnimationFrame(()=>{
-                fitZ();
-                setProgress(90,'Extrayendo textos editables...');
-              });
+              requestAnimationFrame(()=>fitZ());
 
-              // Step 2: wait for the SVG to fully paint before reading getBoundingClientRect
-              // We poll until the first text element has non-zero dimensions
-              function waitForSVGPaint(attempt){
-                const bgInner=document.getElementById(bg.id);
-                const innerSVG=bgInner&&bgInner.querySelector('svg');
-                const firstText=innerSVG&&innerSVG.querySelector('text');
-                const rect=firstText&&firstText.getBoundingClientRect();
-                
-                if(rect&&rect.width>0&&rect.height>0){
-                  // SVG is painted — now extract texts and hide originals
+              // Step 2: poll until the background SVG container has real dimensions
+              function waitForPaint(attempt){
+                const bgEl=document.getElementById(bg.id);
+                const rect=bgEl&&bgEl.getBoundingClientRect();
+                const ready=rect&&rect.width>10&&rect.height>10;
+                if(ready){
+                  setProgress(90,'Extrayendo textos editables...');
+                  // SVG texts stay visible — overlays are transparent (interaction only)
                   parseSVGTexts(svg,vbX,vbY);
-                  innerSVG.querySelectorAll('text').forEach(t=>{
-                    t.setAttribute('display','none');
-                  });
                   buildLL();
                   setProgress(100,'¡Listo!');
-                  setTimeout(()=>loader.remove(),500);
-                } else if(attempt<40){
-                  // Not ready yet — retry in 50ms (up to 2 seconds total)
-                  setTimeout(()=>waitForSVGPaint(attempt+1), 50);
+                  setTimeout(()=>loader.remove(),400);
+                } else if(attempt<60){
+                  setTimeout(()=>waitForPaint(attempt+1),50);
                 } else {
-                  // Timeout — proceed anyway with whatever we have
                   parseSVGTexts(svg,vbX,vbY);
-                  innerSVG&&innerSVG.querySelectorAll('text').forEach(t=>{
-                    t.setAttribute('display','none');
-                  });
                   buildLL();
                   setProgress(100,'¡Listo!');
-                  setTimeout(()=>loader.remove(),500);
+                  setTimeout(()=>loader.remove(),400);
                 }
               }
-              // Start polling after a short delay to let the browser paint
-              setTimeout(()=>waitForSVGPaint(0), 100);
+              setTimeout(()=>waitForPaint(0),50);
             }));
           },30);
         },50);
@@ -839,8 +825,8 @@ function renderObj(o){
     el.style.fontStyle=o.fontStyle;
     // SVG-extracted texts: show transparent overlay (visual from background SVG)
     // so font mismatches don't matter. On selection, show a subtle highlight.
-    el.style.color=o.svgExtracted?'transparent':o.color;
-    el.style.backgroundColor=o.svgExtracted?'transparent':'';
+    el.style.color='transparent';
+    el.style.backgroundColor='transparent';
     el.style.textAlign=o.textAlign;
     el.style.letterSpacing=o.letterSpacing+'px';
     el.style.lineHeight=o.lineHeight;
@@ -1277,8 +1263,6 @@ function syncTextToSVGBackground(o){
   // Update visual properties on the <text> element
   tel.setAttribute('fill', o.color);
   tel.setAttribute('font-size', String(o.fontSize));
-  // Make visible using attribute (not style) so XMLSerializer captures it
-  tel.setAttribute('display', 'inline');
   tel.style.fontFamily = `'${o.fontFamily}',sans-serif`;
   tel.style.fontWeight = o.fontWeight;
   tel.style.fontStyle = o.fontStyle;
@@ -1442,18 +1426,8 @@ function buildSVGStr(){
       const liveEl=document.getElementById(o.id);
       const liveSVG=liveEl&&liveEl.querySelector('svg');
       if(liveSVG){
-        // Temporarily make all hidden texts visible for export
-        // (use getAttribute/setAttribute so the serialized XML captures it)
-        const hiddenTexts=[];
-        liveSVG.querySelectorAll('text').forEach(t=>{
-          if(t.getAttribute('display')==='none'){
-            hiddenTexts.push(t);
-            t.setAttribute('display','inline');
-          }
-        });
+        // Serialize the live SVG — texts are always display:inline, edited content is already applied
         const serialized=new XMLSerializer().serializeToString(liveSVG);
-        // Restore hidden state after serialization
-        hiddenTexts.forEach(t=>{ t.setAttribute('display','none'); });
         s+=`<g>${serialized}</g>`;
       } else {
         // Fallback to stored string
