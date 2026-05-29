@@ -1228,7 +1228,8 @@ function applyTxt(id){
   renderObj(o);buildLL();
 }
 
-// Sync an edited text overlay back into the background SVG element
+// Sync an edited text overlay back into the background SVG element.
+// Works with the POSITIONED tspans grouped by Y value — same structure as getSVGText.
 function syncTextToSVGBackground(o){
   const bgObj=objs.find(b=>b.type==='svg'&&b.locked);
   if(!bgObj) return;
@@ -1241,59 +1242,79 @@ function syncTextToSVGBackground(o){
   if(!tel) return;
 
   const lines=o.text.split('\n');
-  const tspans=Array.from(tel.querySelectorAll('tspan'));
 
-  if(tspans.length>0){
-    // Strategy: preserve ALL original tspan positioning attributes (x, y, dy, dx).
-    // Only update the text content. This prevents any position shifts.
-    // If the user added/removed lines, we add/remove tspans while cloning attrs from neighbors.
-    
-    // Update existing tspans with new text content
-    tspans.forEach((ts, i) => {
-      if(i < lines.length){
-        ts.textContent = lines[i];
-        // Update style attrs if user changed font/color
-        if(o.color && o.color!=='#ffffff') ts.setAttribute('fill', o.color);
-        if(o.fontWeight) ts.setAttribute('font-weight', o.fontWeight);
+  // Get all positioned tspans (those with explicit x or y) — these are the "line anchors"
+  // Same logic as getSVGText so we operate on the same elements we read from
+  const allTspans=Array.from(tel.querySelectorAll('tspan'));
+  const positioned=allTspans.filter(ts=>ts.getAttribute('x')!==null||ts.getAttribute('y')!==null);
+
+  if(positioned.length===0){
+    // Simple text node — just set textContent
+    tel.textContent=o.text;
+  } else {
+    // Group positioned tspans by y value (same y = same visual line)
+    const byY=new Map();
+    positioned.forEach(ts=>{
+      const y=ts.getAttribute('y')||'0';
+      if(!byY.has(y)) byY.set(y,[]);
+      byY.get(y).push(ts);
+    });
+    const yKeys=[...byY.keys()].sort((a,b)=>parseFloat(a)-parseFloat(b));
+
+    // For each output line: find the corresponding y-group and update the FIRST tspan of that group.
+    // Clear the rest of the tspans in that group (they were for mixed bold/color runs).
+    yKeys.forEach((y,i)=>{
+      const group=byY.get(y);
+      const firstTs=group[0];
+      if(i<lines.length){
+        // Update first tspan with new text, hide the rest of the group
+        firstTs.textContent=lines[i];
+        firstTs.removeAttribute('display');
+        // Hide sibling tspans in same line (mixed-style runs — simplified on edit)
+        group.slice(1).forEach(ts=>{ts.textContent='';ts.setAttribute('display','none');});
+        // Also show the outer wrapper tspan (parent) if it was hidden
+        const parent=firstTs.parentElement;
+        if(parent&&parent.tagName.toLowerCase()==='tspan'){
+          parent.removeAttribute('display');
+        }
       } else {
-        // Extra tspans beyond new line count — hide them
-        ts.textContent = '';
-        ts.style.display = 'none';
+        // Extra lines beyond user's input — hide entire group
+        group.forEach(ts=>{ts.textContent='';ts.setAttribute('display','none');});
+        const parent=group[0].parentElement;
+        if(parent&&parent.tagName.toLowerCase()==='tspan'){
+          parent.setAttribute('display','none');
+        }
       }
     });
 
-    // If user added MORE lines than original tspans, append new ones
-    if(lines.length > tspans.length){
-      const lastTs = tspans[tspans.length-1];
-      // Calculate line height from existing tspans if possible
-      let lhPx = o.fontSize * o.lineHeight;
-      if(tspans.length >= 2){
-        const y0 = parseFloat(tspans[0].getAttribute('y')||0);
-        const y1 = parseFloat(tspans[1].getAttribute('y')||0);
-        if(y1 > y0) lhPx = y1 - y0;
+    // If user typed MORE lines than original, append new tspans after the last one
+    if(lines.length>yKeys.length){
+      const lastGroup=byY.get(yKeys[yKeys.length-1]);
+      const lastTs=lastGroup[0];
+      const lastY=parseFloat(lastTs.getAttribute('y')||'0');
+      const lastX=lastTs.getAttribute('x')||'0';
+      // Estimate line height from existing y positions
+      let lhPx=o.fontSize*(o.lineHeight||1.2);
+      if(yKeys.length>=2){
+        const dy=parseFloat(yKeys[1])-parseFloat(yKeys[0]);
+        if(dy>0) lhPx=dy;
       }
-      for(let i = tspans.length; i < lines.length; i++){
-        const ts = document.createElementNS('http://www.w3.org/2000/svg','tspan');
-        // Copy x from last tspan, add dy for new lines
-        const lastX = lastTs.getAttribute('x') || '0';
-        const lastY = parseFloat(lastTs.getAttribute('y') || 0);
-        ts.setAttribute('x', lastX);
-        ts.setAttribute('y', String(lastY + lhPx * (i - tspans.length + 1)));
-        ts.textContent = lines[i];
+      for(let i=yKeys.length;i<lines.length;i++){
+        const ts=document.createElementNS('http://www.w3.org/2000/svg','tspan');
+        ts.setAttribute('x',lastX);
+        ts.setAttribute('y',String(lastY+lhPx*(i-yKeys.length+1)));
+        ts.textContent=lines[i];
         tel.appendChild(ts);
       }
     }
-  } else {
-    // No tspans — simple text node
-    tel.textContent = o.text;
   }
 
-  // Update visual properties on the <text> element
-  tel.setAttribute('fill', o.color);
-  tel.setAttribute('font-size', String(o.fontSize));
-  tel.style.fontFamily = `'${o.fontFamily}',sans-serif`;
-  tel.style.fontWeight = o.fontWeight;
-  tel.style.fontStyle = o.fontStyle;
+  // Update visual properties
+  tel.setAttribute('fill',o.color);
+  tel.setAttribute('font-size',String(o.fontSize));
+  tel.style.fontFamily=`'${o.fontFamily}',sans-serif`;
+  tel.style.fontWeight=o.fontWeight;
+  tel.style.fontStyle=o.fontStyle;
 }
 
 // Sync position change of a moved svgExtracted overlay back to background SVG text element
